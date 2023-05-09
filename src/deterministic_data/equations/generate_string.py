@@ -1,15 +1,22 @@
 import concurrent.futures
 import functools
 import time
-from typing import Callable, Generator
+from typing import Callable  # Generator, List, Tuple
 import random
 import re
+import numpy as np
 
 # PARAM:
 max_length: int = 10
-int_size: int = 100
+int_size: int = 99
+
 
 # CONSTS
+max_unit_length = (
+    ((len(str(int_size)) + 1) * 2) +  # 2 numbers
+    3 +  # whitespace op whitespace
+    3  # second operator
+                  ) * max_length - 3  # last doesnt have 2nd op
 operators = ['+', '-', '*', '/']
 regex_mult_div = re.compile(r'(-?\d+)\s*([/*]{1,2})\s*(-?\d+)')
 regex_sub_add = re.compile(r'(-?\d+)\s*([+-])\s*(-?\d+)')
@@ -81,9 +88,14 @@ encoder_map = {
     ' ': 0b1110,
 }
 @timer
-def encoder(equation_expression: str) -> Generator:
-    return (encoder_map[char] for char in equation_expression)
-
+def encoder(equation_expression: str) -> list[tuple[int, int]]:
+    result = [(encoder_map[char], index) for index, char in enumerate(equation_expression)]
+    last_index = result[-1][1]
+    if last_index < max_unit_length:
+        left = max_unit_length - last_index
+        for num in range(left):
+            result.append((0b1111, last_index + num))
+    return result
 @timer
 def solve(problem: str):
     """
@@ -150,21 +162,41 @@ def iteratively_replace(origin: str, pattern: re.Pattern | str, replacement: str
     return iteratively_replace(new, pattern, replacement)
 
 
-def get_a_data() -> tuple[str, tuple, int]:
+def get_a_data(no_problem=False) -> tuple[str, list, int] | tuple[list, int]:
     """
     :return: problem solution pair
     """
     problem = generate()
-    return problem, tuple(encoder(problem)), solve(problem)
+    if no_problem:
+        return encoder(problem), solve(problem)
+    return problem, encoder(problem), solve(problem)
 
 
-def generate_dataset(size: int) -> list[tuple[str, tuple, int]]:
+def generate_dataset(size: int, no_problem=False, to_np_array=False) -> list[tuple[str, list, int]] | tuple[list[np.ndarray], list[int]]:
     """
+    :param to_np_array:
+    :param no_problem:
     :param size: Size of dataset
     :return: List of (problem, solution) tuples relative size
     """
-    return [get_a_data() for _ in range(size)]
+    if not to_np_array:
+        return [get_a_data(no_problem) for _ in range(size)]
+    else:
+        result = [get_a_data(True) for _ in range(size)]
+        return np.array([i[0] for i in result]), [i[1] for i in result]
 
+def dataset_generator_multiprocess(size: int, divisions: int, no_problem=False, to_np_array=False) -> list[tuple[str, list, int]]:
+    """
 
-# if __name__ == '__main__':
+    :param no_problem: Omits the equation string from the dataset
+    :param size: Size of dataset
+    :param divisions: MP partitions to calculate with sweet spot is not to many or not too few probably best for a pow 2
+    :return:
+    """
+    with concurrent.futures.ProcessPoolExecutor() as exe:
+        futures = [exe.submit(generate_dataset, size//divisions, no_problem=no_problem, to_np_array=to_np_array) for _ in range(divisions)]
+        return [thread.result() for thread in futures]
 
+if __name__ == '__main__':
+    print(len(generate_dataset(12, to_np_array=True)[0][0]))
+    # print(np.array([i[1] for i in generate_dataset(10)]))
